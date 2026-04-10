@@ -7,41 +7,37 @@ using Google.Apis.Requests;
 using Google.Apis.Util;
 using HtmlAgilityPack;
 using Google.Apis.Gmail.v1.Data;
+using MailOperations.Services.Interfaces;
 
-namespace MailOperations;
+namespace MailOperations.Services;
 
-public static class MailService
+public class MailService : IMailService
 {
     private static readonly string ClientSecretPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "client_secret.json");
-    private static UserCredential _credential;
+    private static UserCredential? _credential;
     private static readonly string[] Scopes = { GmailService.Scope.GmailReadonly };
-    private static GmailService Service;
+    private static GmailService _service = new();
 
-    public static async Task Init()
+    private MailService()
     {
-        _credential = await GetCredential(ClientSecretPath);
-        Service = new GmailService(new BaseClientService.Initializer()
-        {
-            HttpClientInitializer = _credential,
-            ApplicationName = "MailOperations",
-        });
+        InitializeService(ClientSecretPath).GetAwaiter().GetResult();
     }
 
-    public static async Task<List<Label>> RequestLabels()
+    public async Task<List<Label>> RequestLabels()
     {
         var labels = new List<Label>();
-        var response = await Service.Users.Labels.List("me").ExecuteAsync();
+        var response = await _service.Users.Labels.List("me").ExecuteAsync();
         foreach (var label in response.Labels)
             labels.Add(label);
         return labels;
     }
     
-    public static async Task<List<Message>> RequestMessages(int maxResults)
+    public async Task<MailboxContent> RequestMessages(Label label,int maxResults)
     {
-        BatchRequest batchRequest = new BatchRequest(Service);
+        BatchRequest batchRequest = new BatchRequest(_service);
         
-        var parameters = new Repeatable<string>(enumeration: new[] { "Label_1217953867591923163" });
-        var mailsResponse = Service.Users.Messages.List("me");
+        var parameters = new Repeatable<string>(enumeration: new[] { label.Id ?? "Label_1217953867591923163" });
+        var mailsResponse = _service.Users.Messages.List("me");
         mailsResponse.LabelIds = parameters;
         mailsResponse.MaxResults = maxResults;
         var mails = await mailsResponse.ExecuteAsync();
@@ -56,14 +52,14 @@ public static class MailService
         });
 
         foreach (var mail in mails.Messages)
-            batchRequest.Queue(Service.Users.Messages.Get("me", mail.Id),responseCallback);
+            batchRequest.Queue(_service.Users.Messages.Get("me", mail.Id),responseCallback);
         
         await batchRequest.ExecuteAsync();
         
-        return messages;
+        return await HtmlMessagesToMailboxContent(messages);
     }
     
-    public static MailboxContent RawMessagesToMailboxContent(List<Message> messages)
+    private async Task<MailboxContent> HtmlMessagesToMailboxContent(List<Message> messages)
     {
         List<MailContent> content = new List<MailContent>();
         foreach (var message in messages)
@@ -80,14 +76,14 @@ public static class MailService
             
             string cleanBody = htmlStringWriter.ToString();
 
-            MailContent mailContent = new() { From = from, Subject = subject, Body = GetHtmlInnerText(cleanBody), Attachments = attachmentId };
+            MailContent mailContent = new() { From = from, Subject = subject, Body = await GetHtmlInnerText(cleanBody), Attachments = attachmentId };
             
             content.Add(mailContent);
         }
         
-        return new MailboxContent() { Mails = content };
+        return new MailboxContent { Mails = content };
     }
-    private static string GetHtmlInnerText(string html)
+    private async Task<string> GetHtmlInnerText(string html)
     {
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
@@ -113,16 +109,20 @@ public static class MailService
         
         return result;
     }
-    private static async Task<UserCredential> GetCredential(string clientSecretPath)
+    private async Task InitializeService(string clientSecretPath)
     {
-        UserCredential credential;
         await using (var stream = new FileStream(clientSecretPath, FileMode.Open, FileAccess.Read))
         {
-            credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
+            _credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
                 GoogleClientSecrets.FromStreamAsync(stream).Result.Secrets,
                 Scopes,
                 "me", CancellationToken.None, new FileDataStore("MailOperations.DataStore"));
         }
-        return credential;
+        
+        _service = new GmailService(new BaseClientService.Initializer()
+        {
+            HttpClientInitializer = _credential,
+            ApplicationName = "MailOperations",
+        });
     }
 }

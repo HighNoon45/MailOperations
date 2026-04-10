@@ -2,13 +2,13 @@ namespace MailOperations;
 
 public record MailboxContent
 {
-    public List<MailContent> Mails { get; init; }
+    public required List<MailContent> Mails { get; init; }
 }
 
-public record MailContent()
+public record MailContent
 {
-    public string From { get; init; }
-    public string Subject { get; init; }
-    public string Body { get; init; }
-    public string Attachments { get; init; }
+    public string From { get; init; } = string.Empty;
+    public string Subject { get; init; } = string.Empty;
+    public string Body { get; init; } = string.Empty;
+    public string Attachments { get; init; } = string.Empty;
 }
